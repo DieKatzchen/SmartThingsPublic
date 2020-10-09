@@ -171,6 +171,7 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv1.WakeUpNotification cmd)
        logging("No commands to send")
        response([zwave.wakeUpV1.wakeUpNoMoreInformation().format()])
     }
+    return commands(cmds)
 }
 
 def buttonEvent(button, value) {
@@ -189,11 +190,6 @@ def zwaveEvent(physicalgraph.zwave.commands.batteryv1.BatteryReport cmd) {
 	}
 	state.lastBatteryReport = now()
 	createEvent(map)
-}
-
-def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd) {
-	logging("AssociationReport $cmd")
-    state."association${cmd.groupingIdentifier}" = cmd.nodeId[0]
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.configurationv2.ConfigurationReport cmd) {
