@@ -152,6 +152,8 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv1.WakeUpNotification cmd)
     logging("Device ${device.displayName} woke up")
     
     def request = update_needed_settings()
+	
+    def cmds = processAssociations()
     
     request << zwave.versionV1.versionGet()
     
@@ -507,6 +509,87 @@ private command(physicalgraph.zwave.Command cmd) {
 
 private commands(commands, delay=1000) {
 	delayBetween(commands.collect{ command(it) }, delay)
+}
+
+def setDefaultAssociations() {
+    def smartThingsHubID = (zwaveHubNodeId.toString().format( '%02x', zwaveHubNodeId )).toUpperCase()
+    state.defaultG1 = [smartThingsHubID]
+    state.defaultG2 = []
+    state.defaultG3 = []
+}
+
+def setAssociationGroup(group, nodes, action, endpoint = null){
+    if (!state."desiredAssociation${group}") {
+        state."desiredAssociation${group}" = nodes
+    } else {
+        switch (action) {
+            case 0:
+                state."desiredAssociation${group}" = state."desiredAssociation${group}" - nodes
+            break
+            case 1:
+                state."desiredAssociation${group}" = state."desiredAssociation${group}" + nodes
+            break
+        }
+    }
+}
+
+def processAssociations(){
+   def cmds = []
+   setDefaultAssociations()
+   def associationGroups = 5
+   if (state.associationGroups) {
+       associationGroups = state.associationGroups
+   } else {
+       if (infoEnable) log.info "${device.label?device.label:device.name}: Getting supported association groups from device"
+       cmds <<  zwave.associationV2.associationGroupingsGet()
+   }
+   for (int i = 1; i <= associationGroups; i++){
+      if(state."actualAssociation${i}" != null){
+         if(state."desiredAssociation${i}" != null || state."defaultG${i}") {
+            def refreshGroup = false
+            ((state."desiredAssociation${i}"? state."desiredAssociation${i}" : [] + state."defaultG${i}") - state."actualAssociation${i}").each {
+                if (it != null){
+                    if (infoEnable) log.info "${device.label?device.label:device.name}: Adding node $it to group $i"
+                    cmds << zwave.associationV2.associationSet(groupingIdentifier:i, nodeId:Integer.parseInt(it,16))
+                    refreshGroup = true
+                }
+            }
+            ((state."actualAssociation${i}" - state."defaultG${i}") - state."desiredAssociation${i}").each {
+                if (it != null){
+                    if (infoEnable) log.info "${device.label?device.label:device.name}: Removing node $it from group $i"
+                    cmds << zwave.associationV2.associationRemove(groupingIdentifier:i, nodeId:Integer.parseInt(it,16))
+                    refreshGroup = true
+                }
+            }
+            if (refreshGroup == true) cmds << zwave.associationV2.associationGet(groupingIdentifier:i)
+            else if (infoEnable) log.info "${device.label?device.label:device.name}: There are no association actions to complete for group $i"
+         }
+      } else {
+         if (infoEnable) log.info "${device.label?device.label:device.name}: Association info not known for group $i. Requesting info from device."
+         cmds << zwave.associationV2.associationGet(groupingIdentifier:i)
+      }
+   }
+   return cmds
+}
+
+def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd) {
+    if (debugEnable) log.debug "${device.label?device.label:device.name}: ${cmd}"
+    def temp = []
+    if (cmd.nodeId != []) {
+       cmd.nodeId.each {
+          temp += it.toString().format( '%02x', it.toInteger() ).toUpperCase()
+       }
+    } 
+    state."actualAssociation${cmd.groupingIdentifier}" = temp
+    if (infoEnable) log.info "${device.label?device.label:device.name}: Associations for Group ${cmd.groupingIdentifier}: ${temp}"
+    updateDataValue("associationGroup${cmd.groupingIdentifier}", "$temp")
+}
+
+def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationGroupingsReport cmd) {
+    if (debugEnable) log.debug "${device.label?device.label:device.name}: ${cmd}"
+    sendEvent(name: "groups", value: cmd.supportedGroupings)
+    if (infoEnable) log.info "${device.label?device.label:device.name}: Supported association groups: ${cmd.supportedGroupings}"
+    state.associationGroups = cmd.supportedGroupings
 }
 
 def configuration_model()
